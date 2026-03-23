@@ -55,11 +55,26 @@ void block_store_destroy(block_store_t *const bs)
 		free(bs);
 	}
 }
-
+// Searches for a free block, marks it as in use, and returns the block's id
+// \param bs - BS device
+// \return allocated block's id, SIZE_MAX on error
 size_t block_store_allocate(block_store_t *const bs)
 {
-	UNUSED(bs);
-	return 0;
+	if(bs == NULL)
+	{
+		return SIZE_MAX;
+	}
+	// Find first 0 in fbm
+	size_t block = bitmap_ffz(bs->fbm);
+
+	// No free blocks available
+	if(block == SIZE_MAX)
+	{
+		return SIZE_MAX;
+	}
+	// Set as used
+	bitmap_set(bs->fbm, block);
+	return block;
 }
 
 bool block_store_request(block_store_t *const bs, const size_t block_id)
@@ -82,11 +97,22 @@ bool block_store_request(block_store_t *const bs, const size_t block_id)
 	// Verify the block was successfully marked
 	return bitmap_test(bs->fbm, block_id);
 }
-
+// Frees the specified block
+// \param bs - BS device
+// \param block_id - The block to free
 void block_store_release(block_store_t *const bs, const size_t block_id)
 {
-	UNUSED(bs);
-	UNUSED(block_id);
+	if(bs == NULL)
+	{
+		return;
+	}
+	// Prevent out of bounds access
+	if(block_id >= BLOCK_STORE_NUM_BLOCKS)
+	{
+		return;
+	}
+	// Reset block
+	bitmap_reset(bs->fbm, block_id);
 }
 
 size_t block_store_get_used_blocks(const block_store_t *const bs)
@@ -100,10 +126,11 @@ size_t block_store_get_free_blocks(const block_store_t *const bs)
 	UNUSED(bs);
 	return 0;
 }
-
+// Returns the total number of user-addressable blocks
+// \return Total blocks
 size_t block_store_get_total_blocks()
 {
-	return 0;
+	return BLOCK_STORE_NUM_BLOCKS;
 }
 
 size_t block_store_read(const block_store_t *const bs, const size_t block_id, void *buffer)
