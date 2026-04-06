@@ -4,22 +4,20 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 #include "bitmap.h"
 #include "block_store.h"
 // include more if you need
 
-
-// Block store struct definition
-// Data array holds all blocks contiguously
 struct block_store
 {
-	uint8_t data[BLOCK_STORE_NUM_BYTES];  // 512 blocks * 32 bytes = 16,384 bytes
-	bitmap_t *fbm;                         // Free Block Map bitmap overlay
-};
+	uint8_t data[BLOCK_STORE_NUM_BYTES];
+	bitmap_t *fbm;
+}; 
 // Creates a bitmap to contain n bits (zero initialized)
 // \return: A pointer to new block storage and null if failure
 block_store_t *block_store_create()
-{
+{	
 	// Allocate and zero-initialize the block store
 	block_store_t *bs = calloc(1, sizeof(block_store_t));
 	if (!bs)
@@ -39,7 +37,13 @@ block_store_t *block_store_create()
 	// Mark the blocks used by the bitmap as allocated
 	for (size_t i = BITMAP_START_BLOCK; i < BITMAP_START_BLOCK + BITMAP_NUM_BLOCKS; i++)
 	{
-		block_store_request(bs, i);
+		if(!block_store_request(bs, i))
+		{
+			// Something went wrong. Clean things up.
+			bitmap_destroy(bs->fbm);
+			free(bs);
+			return NULL;
+		}
 	}
 
 	return bs;
@@ -61,7 +65,7 @@ void block_store_destroy(block_store_t *const bs)
 // \return allocated block's id, SIZE_MAX on error
 size_t block_store_allocate(block_store_t *const bs)
 {
-	if(bs == NULL)
+	if(bs == NULL || !bs->fbm)
 	{
 		return SIZE_MAX;
 	}
@@ -84,7 +88,7 @@ size_t block_store_allocate(block_store_t *const bs)
 bool block_store_request(block_store_t *const bs, const size_t block_id)
 {
 	// Validate parameters
-	if (!bs || block_id >= BLOCK_STORE_NUM_BLOCKS)
+	if (!bs || block_id >= BLOCK_STORE_NUM_BLOCKS || !bs->fbm)
 	{
 		return false;
 	}
@@ -106,7 +110,7 @@ bool block_store_request(block_store_t *const bs, const size_t block_id)
 // \param block_id - The block to free
 void block_store_release(block_store_t *const bs, const size_t block_id)
 {
-	if(bs == NULL)
+	if(bs == NULL || !bs->fbm)
 	{
 		return;
 	}
@@ -233,7 +237,7 @@ block_store_t *block_store_deserialize(const char *const filename)
 		perror("open failed");
 		return NULL;
 	}
-	// Allocate new block
+	// Allocate new block store
 	block_store_t *bs = calloc(1, sizeof(block_store_t));
 	if(!bs){
 		close(fd);
@@ -243,6 +247,7 @@ block_store_t *block_store_deserialize(const char *const filename)
 	// Loop until expected number of bytes is reached
 	while(total_read < BLOCK_STORE_NUM_BYTES)
 	{
+		// Read remaining bytes
 		ssize_t bytes_read = read(fd, bs->data + total_read, BLOCK_STORE_NUM_BYTES - total_read);
 		if(bytes_read < 0)
 		{
@@ -256,10 +261,13 @@ block_store_t *block_store_deserialize(const char *const filename)
 		{
 			break;
 		}
-		// Amount of successfull bytes read
+		// Amount of successful bytes read
 		total_read += bytes_read;
 	}
-	close(fd);
+	if(close(fd) < 0)
+	{
+		perror("close failed");
+	}
 	// Pad remaining bytes with 0
 	if(total_read < BLOCK_STORE_NUM_BYTES)
 	{
@@ -286,7 +294,7 @@ size_t block_store_serialize(const block_store_t *const bs, const char *const fi
     {
         return 0;
     }
-	// Open file
+	// Open file for writing, creating if needed, and truncating existing content
 	int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (fd < 0)
 	{
@@ -297,6 +305,7 @@ size_t block_store_serialize(const block_store_t *const bs, const char *const fi
 	// Loop until all bytes are written
 	while(total_written < BLOCK_STORE_NUM_BYTES)
 	{
+		// Write remaining bytes
 		ssize_t bytes_written = write(fd, bs->data + total_written, BLOCK_STORE_NUM_BYTES - total_written);
 		if(bytes_written < 0)
 		{
@@ -304,9 +313,12 @@ size_t block_store_serialize(const block_store_t *const bs, const char *const fi
 			close(fd);
 			return 0 ;
 		}
-		// successfull amount of writes
+		// successful amount of writes
 		total_written += bytes_written;
 	}
-	close(fd);
+	if(close(fd) < 0)
+	{
+		perror("close failed");
+	}
 	return total_written;
 }
